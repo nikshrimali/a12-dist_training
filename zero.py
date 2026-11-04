@@ -15,7 +15,7 @@ weights and Adam state), each rank holds:
     0        DDP      Psi                Psi               Psi                    2 Psi
     1        ZeRO-1   Psi                Psi               Psi / N                2 Psi
     2        ZeRO-2   Psi                Psi / N           Psi / N                2 Psi
-    3        ZeRO-3   Psi / N            Psi / N           Psi / N                3 Psi
+    3        ZeRO-3   Psi / N            Psi / N           Psi / N                3 Psi (2.744 Psi here)
 
 The model is cut into "units": unit 0 holds the embeddings, the final LayerNorm and the output
 head (one unit because the output head reuses the embedding matrix), and every transformer block
@@ -23,8 +23,9 @@ is one more unit. Each unit is one flat buffer padded to a multiple of N, and ra
 of every unit. Stages 2 and 3 move gradients unit by unit during backward; stage 3 also fetches
 each unit's weights just before it runs and drops them right after.
 
-Ledger counts the bytes of every buffer the engine allocates or frees, by category, and keeps the
-peak. Comm sends every collective through one place and counts the bytes each rank sends, using
+Ledger counts the bytes of every model-state buffer the engine allocates or frees, by category,
+and keeps the peak. It leaves out scratch space under 1 MB (see ADAM_CHUNK) and the gradient
+autograd computes for a parameter before adding it into our buffer. Comm sends every collective through one place and counts the bytes each rank sends, using
 the ring-algorithm cost the ZeRO paper uses.
 """
 
@@ -36,7 +37,9 @@ import torch.distributed as dist
 
 STAGE_NAMES = {0: "DDP", 1: "ZeRO-1", 2: "ZeRO-2", 3: "ZeRO-3"}
 CATEGORIES = ("params", "grads", "optimizer")
-ADAM_CHUNK = 65536  # Adam works on this many numbers at a time, so its scratch space stays at 256 KB
+# Adam and the gradient norm work on this many numbers at a time, so their scratch space stays at
+# 256 KB (Adam's fp32 denominator) and 512 KB (the norm's fp64 copy) instead of the size of a unit.
+ADAM_CHUNK = 65536
 
 
 class Ledger:
@@ -194,7 +197,7 @@ def adam_(p, m, v, g, lr, t, clip, weight_decay, decay, betas=(0.9, 0.95), eps=1
         s = slice(i, i + ADAM_CHUNK)
         m[s].mul_(b1).add_(g[s], alpha=(1 - b1) * clip)
         v[s].mul_(b2).addcmul_(g[s], g[s], value=(1 - b2) * clip * clip)
-        denom = (v[s].sqrt() / math.sqrt(bc2)).add_(eps)
+        denom = v[s].sqrt().div_(math.sqrt(bc2)).add_(eps)
         p[s].addcdiv_(m[s], denom, value=-lr / bc1)
 
 
@@ -373,7 +376,9 @@ class ZeRO:
         # the squares of its slice and one all-reduce of a single number adds the slices up.
         sq = torch.zeros(1, dtype=torch.float64)
         for g in grads:
-            sq += g.double().pow(2).sum()
+            for i in range(0, g.numel(), ADAM_CHUNK):
+                c = g[i : i + ADAM_CHUNK].double()
+                sq += torch.dot(c, c)
         if self.stage > 0:
             self.comm.all_reduce(sq)
         norm = sq.sqrt().item()

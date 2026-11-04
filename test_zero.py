@@ -1,6 +1,6 @@
 """Check that every ZeRO stage trains exactly like DDP, and DDP exactly like one process with torch.optim.AdamW.
 
-    uv run pytest test_zero.py -v          # about 5 s
+    uv run pytest test_zero.py -q -s       # about 5 s; -s shows the measured differences
 
 ZeRO changes where numbers live, never what they are. So in fp32, after the same steps on the same
 data, every stage must end with the same weights as DDP, and DDP must match a single process that
@@ -82,6 +82,9 @@ def test_every_stage_matches_ddp_and_pytorch(world, tmp_path):
         for name in ddp:
             diff = (got[name] - ddp[name]).abs().max().item()
             assert diff < 1e-5, f"stage {stage} differs from DDP at {name} by {diff:.2e}"
+    worst = {s: max((torch.load(tmp_path / f"stage{s}.pt")[n] - ref[n]).abs().max().item() for n in ref) for s in range(4)}
+    print(f"\n{world} ranks: weights moved up to {moved:.1e} from init; largest difference from torch.optim.AdamW: "
+          + ", ".join(f"stage {s} {d:.1e}" for s, d in worst.items()))
 
 
 if __name__ == "__main__" and sys.argv[1:2] == ["--worker"]:

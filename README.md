@@ -22,7 +22,7 @@ What each stage keeps per rank (Ψ = parameter count):
 | DDP | 2Ψ | 2Ψ | 12Ψ | 2Ψ (all-reduce) |
 | ZeRO-1 | 2Ψ | 2Ψ | 12Ψ/N | 2Ψ (reduce-scatter + all-gather) |
 | ZeRO-2 | 2Ψ | 2Ψ/N | 12Ψ/N | 2Ψ, per unit during backward |
-| ZeRO-3 | 2Ψ/N | 2Ψ/N | 12Ψ/N | 3Ψ in the paper, 2.66Ψ here (see Findings) |
+| ZeRO-3 | 2Ψ/N | 2Ψ/N | 12Ψ/N | 3Ψ in the paper, 2.744Ψ here (see Findings) |
 
 ## Results
 
@@ -30,7 +30,7 @@ All from `runs.sh` (replayed with outputs in `zero.ipynb`).
 
 **Correctness (`test_zero.py`).** After 5 fp32 steps on 4 ranks and on 3 ranks, every stage ends within 3.4e-7 of a single process running `torch.optim.AdamW` on the whole batch; the weights moved 5.0e-3 from their start. At N = 32 in bf16, {{LOSS_SENTENCE}}
 
-**Memory per rank at N = 32**, measured by a ledger of every buffer the engine allocates. Between steps it equals the formula to the byte.
+**Memory per rank at N = 32**, measured by a ledger of every model-state buffer the engine allocates (scratch under 1 MB is not counted). Between steps it equals the formula to the byte.
 
 | stage | weights | gradients | optimizer | between steps | peak in a step |
 |---|---|---|---|---|---|
@@ -50,8 +50,8 @@ Plots in `plots/`: `memory.png`, `scaling.png` (memory against N), `timeline.png
 ## Findings we did not plan for
 
 - **bf16 is 270x slower than fp32 on this CPU.** A 512 x 256 by 256 x 1024 matmul takes 80 ms in bf16 or fp16 and 0.30 ms in fp32, one thread, because Apple's fast matrix path is fp32-only. We kept bf16 to keep the paper's byte split, and paid in time: about 20 s per step at N = 32 once the fanless laptop warmed up (12.5 s cold).
-- **ZeRO-3 sends 2.66Ψ, not 3Ψ.** Unit 0 (embeddings + tied output head, 26% of the parameters) is gathered once per step and kept, because the head runs first in backward and the embedding last. So the backward all-gather covers only the blocks: (1 + 0.744 + 1) x 31/32 = 2.659, which is what we measured.
-- **The peaks are set by unit 0.** ZeRO-2's peak gradients (4.00 MB at N = 32) are unit 0's full gradient, open for the whole of backward, plus one block's. A model with more, smaller units, or untied embeddings, would peak lower.
+- **ZeRO-3 sends 2.744Ψ, not 3Ψ.** Unit 0 (embeddings + tied output head, 26% of the parameters) is gathered once per step and kept, because the head runs first in backward and the embedding last. So the backward all-gather covers only the blocks: 1 + 0.744 + 1 = 2.744Ψ, and with the ring's 31/32 at N = 32, 2.659 x 2 bytes, which is what we measured (the paper's 3Ψ would be 2.906 at N = 32).
+- **The peaks are set by unit 0.** ZeRO-2's peak gradients at N = 32 are 4.00 MB: 0.26 MB of permanent slices plus 3.74 MB of full gradients for unit 0 (open for the whole of backward) and one block. A model with more, smaller units, or untied embeddings, would peak lower.
 - **ZeRO-1 peaks above DDP at N = 1** (76.17 against 67.71 MB): the reduce-scatter writes into a separate slice buffer, which at N = 1 is the whole gradient. At N = 32 it costs 0.26 MB.
 
 ## Status
@@ -64,7 +64,7 @@ Complete on the M4. Timings are trends only: 32 processes share 10 cores and glo
 |---|---|
 | `guide.md` | the walkthrough: the 16 bytes, collectives, each ZeRO stage on 8 parameters by hand, then every run explained |
 | `zero.py` | the engine: `Ledger` (byte counting), `Comm` (collectives + byte counts), `Unit`, `ZeRO` (stages 0-3), `adam_`, `predicted_bill` |
-| `train.py` | one run on N ranks: `--stage 0|1|2|3`, launched with `torchrun` |
+| `train.py` | one run on N ranks: `--stage 0\|1\|2\|3`, launched with `torchrun` |
 | `sweep.py` | every stage at N = 1, 2, 4, 8, 16, 32, collected into `runs/sweep/sweep.json` |
 | `test_zero.py` | every stage against DDP, and DDP against `torch.optim.AdamW`, at 4 and 3 ranks |
 | `plot.py` | the six figures in `plots/` |
@@ -74,7 +74,7 @@ Complete on the M4. Timings are trends only: 32 processes share 10 cores and glo
 
 ```bash
 uv sync
-uv run pytest test_zero.py -q                                                  # 5 s
+uv run pytest test_zero.py -q -s                                               # 5 s
 uv run torchrun --nproc_per_node 32 train.py --stage 3 --out runs/s3_n32       # one run
 ./runs.sh                                                                      # everything
 ```

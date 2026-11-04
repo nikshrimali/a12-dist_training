@@ -14,7 +14,7 @@ This guide builds on two earlier ones. [a10-pipeline](../a10-pipeline/guide.md) 
 
 How to read this guide. Parts 1 to 9 are the "lecture": what each piece is, with small numbers you can check on paper. Parts 10 to 19 are the "lab": how to run it, how to read the output, and what our runs measured. Each lecture part ends with a few "check yourself" questions; the answers are folded underneath, so try first. If you are impatient, jump to Part 10 and come back when an output confuses you.
 
-All numbers in the lab come from `runs.sh` (or the notebook `zero.ipynb`, which runs the same commands) on a MacBook Air M4 (10 CPU cores, 16 GB).
+All numbers in the lab come from `runs.sh` (or the notebook `zero.ipynb`, which replays the same commands) on a MacBook Air M4 (10 CPU cores, 16 GB). A few come from one-off checks made while building it, and the text says so where they appear: the 217 MB per process, the bf16 matmul timing, the 12.5 s cool step and the error messages in Part 17.
 
 ---
 
@@ -60,7 +60,7 @@ Training a model with the Adam optimizer in mixed precision costs 16 bytes per p
 | Llama-style 7B | 7 billion | 112 GB | no |
 | 70B | 70 billion | 1,120 GB | no, not even close |
 
-The largest GPU you can buy holds 80 to 192 GB. A 7B model does not fit for training, even though it fits for inference (7B x 2 bytes = 14 GB to just run it). Training needs eight times more memory per parameter than running.
+The most common training GPU, the H100, holds 80 GB (the newest parts reach 192 to 288 GB). On an 80 GB GPU a 7B model does not fit for training, even though it fits for inference (7B x 2 bytes = 14 GB to just run it). Training needs eight times more memory per parameter than running.
 
 ### 1.2 The obvious fix, and why it does not help
 
@@ -574,7 +574,7 @@ ZeRO-1 and ZeRO-2 are free: four to eight times less memory for the same traffic
 
 ### 8.2 Our ZeRO-3 is a little cheaper than 3Ψ, and why
 
-Our ZeRO-3 gathers unit 0 once per step, not twice, because it keeps unit 0 for the whole step (7.4). Unit 0 is 1,081,856 of our 4,231,680 parameters, 26%. So instead of 3Ψ we send:
+Our ZeRO-3 gathers unit 0 once per step, not twice, because it keeps unit 0 for the whole step (the diagram in 7.1). Unit 0 is 1,081,856 of our 4,231,680 parameters, 26%. So instead of 3Ψ we send:
 
 ```
 all-gather, forward:   Ψ                      (every unit)
@@ -587,7 +587,7 @@ At N = 32 that predicts 2.744 x 31/32 = 2.659 Ψ. Part 16 shows the measured num
 
 ### 8.3 Hiding the cost: overlap and prefetch
 
-Bytes sent is not the same as time lost. On real GPUs, communication runs on separate hardware from computation, so the two can happen at the same time. Our code does not do this; it waits for each gather before computing. Real implementations **prefetch**: while block 2 computes, they already gather block 3.
+Bytes sent is not the same as time lost. On real GPUs, NCCL runs communication on a separate CUDA stream from computation, so the two can happen at the same time (they share the GPU's cores, so overlap is not quite free). Our code does not do this; it waits for each gather before computing. Real implementations **prefetch**: while block 2 computes, they already gather block 3.
 
 ```mermaid
 gantt
@@ -662,11 +662,13 @@ You will never ship our `zero.py`. You will configure one of these:
 | this guide | DeepSpeed config | PyTorch FSDP (1) | PyTorch FSDP2 (`fully_shard`) |
 |---|---|---|---|
 | DDP | stage 0 | `ShardingStrategy.NO_SHARD` | (use DDP) |
-| ZeRO-1 | `"zero_optimization": {"stage": 1}` | no exact match | no exact match |
-| ZeRO-2 | `{"stage": 2}` | `SHARD_GRAD_OP` | `reshard_after_forward=False` |
+| ZeRO-1 | `"zero_optimization": {"stage": 1}` | no match; use `torch.distributed.optim.ZeroRedundancyOptimizer` with DDP | same |
+| ZeRO-2 | `{"stage": 2}` | `SHARD_GRAD_OP` (see note) | `reshard_after_forward=False` (see note) |
 | ZeRO-3 | `{"stage": 3}` | `FULL_SHARD` | `reshard_after_forward=True` (default) |
 
-"Units" are called **FSDP units** or wrapping policy in FSDP, and **buckets** in DeepSpeed. Prefetch is `forward_prefetch` / `backward_prefetch` in FSDP and `stage3_prefetch_bucket_size` in DeepSpeed. Once you have read our version, these knobs stop being magic: each one is a line in Part 11's tour.
+A note on the FSDP rows for ZeRO-2. They keep full weights from forward through backward, as ZeRO-2 does, so the peak matches. But after backward they shard the weights again, so between steps they hold 2Ψ/N of weights where ZeRO-2 holds 2Ψ. They sit between our ZeRO-2 and ZeRO-3.
+
+"Units" are called **FSDP units** or wrapping policy in FSDP. DeepSpeed groups gradients into **buckets** (`reduce_bucket_size`) at stages 1 and 2, and fetches weights per submodule at stage 3. Prefetch is `forward_prefetch` / `backward_prefetch` in FSDP and `stage3_prefetch_bucket_size` in DeepSpeed. Once you have read our version, these knobs stop being magic: each one is a line in Part 11's tour.
 
 <details>
 <summary>Check yourself</summary>
@@ -701,7 +703,7 @@ uv sync
 
 This reads `pyproject.toml` and builds `.venv` with Python 3.12, torch (2.15.0 in our lockfile), numpy, matplotlib, pyarrow, tokenizers, huggingface-hub and pytest, plus Jupyter's kernel for the notebook.
 
-**3. Get the tokens.** `train.py` reads `../a10-pipeline/data/fwe` by default: FineWeb-Edu cut into a10's 4,096-token BPE vocabulary, 25,000,000 training tokens (`train.bin`, 48 MB) and 500,000 held-out tokens (`eval.bin`). If you built a10, you have it. If not, build the same files here:
+**3. Get the tokens.** `train.py` reads `../a10-pipeline/data/fwe` by default: FineWeb-Edu cut into a10's 4,096-token BPE vocabulary, 25,000,000 training tokens (`train.bin`, 50 MB) and 500,000 held-out tokens (`eval.bin`). If you built a10, you have it. If not, build the same files here:
 
 ```bash
 uv run data.py --out data/fwe
@@ -712,7 +714,7 @@ and add `--data data/fwe` to every `train.py` command. `sweep.py` passes flags i
 **4. Check the install with the test** (Part 12 explains what it proves):
 
 ```bash
-uv run pytest test_zero.py -q
+uv run pytest test_zero.py -q -s
 ```
 
 Ours printed `2 passed in 5.07s`.
@@ -763,12 +765,12 @@ I kept bf16 anyway. The whole point of the lab is the paper's 2 + 2 + 12 byte sp
 
 | step | command | wall time on our M4 |
 |---|---|---|
-| equivalence test | `uv run pytest test_zero.py -q` | 5 s |
-| scaling sweep, 24 runs of 5 steps | `uv run sweep.py --out runs/sweep --steps 5` | 864 s, about 14 minutes (sum of the "wall" column in `runs/all.log`) |
+| equivalence test | `uv run pytest test_zero.py -q -s` | 5 s |
+| scaling sweep, 24 runs of 5 steps | `uv run sweep.py --out runs/sweep --steps 5` | 864 s, about 14 minutes (sum of the "wall" column in `runs/sweep.log`) |
 | four main runs, N = 32, 60 steps each | `torchrun --nproc_per_node 32 ... --max-steps 60 --eval-every 30` | about 21 s per step, so a bit over 21 minutes each; {{MAIN_RUNS_WALL_MIN}} minutes for all four |
 | plots | `uv run plot.py --runs runs --out plots` | seconds |
 
-The header of `runs.sh` says "about 70 minutes". That was measured on a cool laptop at 12.5 s per step. Hot, it is closer to {{RUNS_SH_TOTAL_MIN}} minutes.
+My first estimate was 70 minutes, based on the 12.5 s per step of a cool laptop. Hot, all of `runs.sh` took {{RUNS_SH_TOTAL_MIN}} minutes.
 
 The notebook `zero.ipynb` runs the same commands. Its first cell has a switch, `RERUN = False`. With it off, each cell prints the log that `runs.sh` already wrote under `runs/` (and runs the command only if that log is missing), so the notebook opens in seconds. Set `RERUN = True` to run everything again.
 
@@ -797,7 +799,7 @@ Each main run uses its own port (`--master_port 2990$s`), the sweep uses `29800 
 
 `Ledger` has three numbers, one per category (`params`, `grads`, `optimizer`). Every buffer the engine creates or frees goes through `alloc` or `free`, and `_changed` keeps the peak total plus the split at that moment. Between `record()` and `stop()` it also keeps every change as an event, which is how `plots/timeline.png` is drawn (Part 15).
 
-Be clear about what the ledger is. It is bookkeeping kept by our code, not a reading from PyTorch's allocator or the operating system. It proves that the engine allocates and frees exactly the buffers the lecture says, at the moments the lecture says. Activations are counted separately, by `saved_activations` in `train.py:55`, which uses a saved-tensors hook to add up every tensor autograd keeps for backward during step 2.
+Be clear about what the ledger is. It is bookkeeping kept by our code, not a reading from PyTorch's allocator or the operating system. It proves that the engine allocates and frees exactly the buffers the lecture says, at the moments the lecture says. It does not see scratch space under 1 MB (Adam's and the norm's chunk temporaries), the gradient autograd computes for a parameter before adding it into our buffer (up to one parameter's size, 2.1 MB for the tied embedding), or gloo's own send and receive buffers. Activations are counted separately, by `saved_activations` in `train.py:55`, which uses a saved-tensors hook to add up every tensor autograd keeps for backward during step 2.
 
 `Comm` wraps the three collectives and counts bytes with the ring formula from Part 4.2:
 
@@ -831,7 +833,7 @@ After it, every parameter is a view into the unit's flat buffer. The model reads
 
 `model_units` puts `tok_emb`, `pos_emb` and `ln_f` into unit 0 (the output head is the same Parameter as `tok_emb.weight`, so it is in there too) and makes each block a unit. Its assert, `"a parameter is in no unit"`, fires if you change the model and forget a parameter.
 
-`adam_` is AdamW written out: decay the matrix ranges, update m and v, divide by the bias-corrected square root of v. Two details. The clip factor from Part 6.4 is folded into the m and v updates instead of scaling the gradient first, so no gradient copy is made. And it works through the buffer 65,536 numbers at a time (`ADAM_CHUNK`), so its scratch space stays at 256 KB instead of a full temporary the size of the slice.
+`adam_` is AdamW written out: decay the matrix ranges, update m and v, divide by the bias-corrected square root of v. Two details. The clip factor from Part 6.4 is folded into the m and v updates instead of scaling the gradient first, so no gradient copy is made. And it works through the buffer 65,536 numbers at a time (`ADAM_CHUNK`), so its scratch space stays at 256 KB instead of a full temporary the size of the slice. The gradient norm in `step` sums its squares the same way, 65,536 numbers at a time, with a 512 KB fp64 scratch copy. (The first version made a full fp64 copy of each unit, 17.3 MB uncounted under DDP; the reviewer caught it.)
 
 ### 11.4 ZeRO.__init__: who keeps what
 
@@ -1179,7 +1181,7 @@ Forward and backward work per rank does not change with the stage or with N: `fw
 
 `optimizer_numbers_per_rank` is 4,231,680 for DDP at every N and 4,231,680 / N for every ZeRO stage, 132,240 at N = 32. That is Part 8.4's table, measured. The top panel of `plots/work.png` draws it on log axes: DDP flat, the three ZeRO stages on one line falling by half per doubling.
 
-The optimizer time falls further than the work. At N = 1 all four stages take about 26 ms for Adam. At N = 32, DDP takes 234.6 ms and ZeRO-1 0.8 ms, about 290 times less for 32 times fewer numbers. 32 processes all running full-size Adam at once, each on one thread, fight over the same cores and memory bandwidth. ZeRO removes that contention along with the duplicated work.
+The optimizer time falls further than the work. At N = 1 all four stages take about 26 ms for Adam. At N = 32, DDP takes 234.6 ms and ZeRO-1 0.8 ms, about 300 times less for 32 times fewer numbers. 32 processes all running full-size Adam at once, each on one thread, fight over the same cores and memory bandwidth. ZeRO removes that contention along with the duplicated work.
 
 ### 16.4 The main runs
 
@@ -1302,10 +1304,10 @@ Each experiment changes one thing. Write your prediction down first, then run it
 | collective | an operation every rank must call together, with matching buffers, such as all-reduce |
 | DDP | Distributed Data Parallel: every rank holds the full model and all-reduces gradients. Stage 0 here |
 | DeepSpeed | Microsoft's training library, where ZeRO was first released |
-| FSDP | Fully Sharded Data Parallel, PyTorch's built-in ZeRO-3 (and ZeRO-2 with `SHARD_GRAD_OP`) |
+| FSDP | Fully Sharded Data Parallel, PyTorch's built-in ZeRO-3 (and close to ZeRO-2 with `SHARD_GRAD_OP`, see Part 9.3) |
 | gloo | PyTorch's collective backend for CPUs, over TCP. Ours |
 | hook | a function PyTorch calls at a set moment: before or after a module's forward, when a tensor's gradient is computed, when a parameter's gradient is complete |
-| ledger | our `Ledger` class: counts every byte the engine allocates or frees, by category, and the peak |
+| ledger | our `Ledger` class: counts every model-state byte the engine allocates or frees, by category, and the peak |
 | master weights | the fp32 copy of every weight the optimizer updates. Turned back into bf16 after each step |
 | mixed precision | bf16 for forward and backward, fp32 for the optimizer state and update |
 | model states | weights, gradients and optimizer state: the three piles ZeRO shards |
