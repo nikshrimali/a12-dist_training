@@ -1,0 +1,934 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>ZeRO Collectives Lab</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@600;800&family=Atkinson+Hyperlegible:wght@400;700&family=IBM+Plex+Mono:wght@500;600&display=swap">
+<style>
+/* Layout: one column. Method tabs, then a stage panel (phase banner, controls, live caption, and a
+   2x2 ring of GPU cards drawn in one SVG), then a playground panel for single collectives. */
+:root {
+  --bg: #eef1f5; --surface: #ffffff; --surface-2: #e6eaf0;
+  --fg: #141922; --fg-2: #3b4452; --muted: #667085;
+  --line: #d5dbe4; --line-strong: #a9b3c2; --shadow: rgba(20, 25, 34, .12);
+  --g0: #2459c9; --g1: #c4500e; --g2: #17804a; --g3: #8a2fb0;
+  --local: #fde7b0; --local-ink: #5a3b00; --partial: #dbe6fb; --sum: #c8eedf;
+  --fresh: #0f8f6e; --fresh-bg: #e3f7ef; --borrowed: #efe4f7; --chip-ink: #ffffff; --focus: #2459c9;
+  --f-display: "Archivo", "Helvetica Neue", Arial, sans-serif;
+  --f-body: "Atkinson Hyperlegible", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --f-mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0d1016; --surface: #151a22; --surface-2: #1d242f;
+    --fg: #e8ecf2; --fg-2: #c3cad5; --muted: #8e98a8;
+    --line: #2a3240; --line-strong: #4a5566; --shadow: rgba(0, 0, 0, .5);
+    --g0: #7aa5ff; --g1: #ff9a5c; --g2: #55cf8a; --g3: #d38af2;
+    --local: #4a3810; --local-ink: #ffe1a1; --partial: #1c2b4a; --sum: #123a2d;
+    --fresh: #4fd6aa; --fresh-bg: #0f2e25; --borrowed: #2b2138; --chip-ink: #0d1016; --focus: #7aa5ff;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0d1016; --surface: #151a22; --surface-2: #1d242f;
+  --fg: #e8ecf2; --fg-2: #c3cad5; --muted: #8e98a8;
+  --line: #2a3240; --line-strong: #4a5566; --shadow: rgba(0, 0, 0, .5);
+  --g0: #7aa5ff; --g1: #ff9a5c; --g2: #55cf8a; --g3: #d38af2;
+  --local: #4a3810; --local-ink: #ffe1a1; --partial: #1c2b4a; --sum: #123a2d;
+  --fresh: #4fd6aa; --fresh-bg: #0f2e25; --borrowed: #2b2138; --chip-ink: #0d1016; --focus: #7aa5ff;
+  color-scheme: dark;
+}
+
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--fg); font-family: var(--f-body); font-size: 15px; line-height: 1.5; }
+.wrap {
+  max-width: 1080px; margin: 0 auto; display: flex; flex-direction: column; gap: 20px;
+  padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-block: 28px 56px;
+}
+h1, h2, h3 { font-family: var(--f-display); text-wrap: balance; margin: 0; }
+.eyebrow { font-family: var(--f-mono); font-size: 12px; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); margin: 0; }
+.top { display: flex; flex-direction: column; gap: 8px; }
+.top h1 { font-weight: 800; font-size: clamp(28px, 4.4vw, 40px); line-height: 1.08; letter-spacing: -.01em; }
+.lede { margin: 0; max-width: 68ch; color: var(--fg-2); }
+
+button { font: inherit; font-size: 14px; color: var(--fg); background: var(--surface); border: 1px solid var(--line-strong); border-radius: 8px; padding: 7px 14px; cursor: pointer; }
+button:hover:not(:disabled) { border-color: var(--fg); }
+button:focus-visible, input:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+button:disabled { opacity: .4; cursor: default; }
+button.primary { background: var(--fg); color: var(--bg); border-color: var(--fg); font-weight: 700; }
+
+.modes { display: flex; flex-direction: column; gap: 10px; }
+.tabs { display: flex; flex-wrap: wrap; gap: 4px; padding: 4px; background: var(--surface-2); border-radius: 10px; width: fit-content; max-width: 100%; }
+.tab { border: 0; background: transparent; padding: 8px 18px; border-radius: 7px; font-weight: 700; color: var(--muted); }
+.tab[aria-selected="true"] { background: var(--surface); color: var(--fg); box-shadow: 0 1px 3px var(--shadow); }
+.blurb { margin: 0; max-width: 72ch; }
+.keeps { display: flex; flex-wrap: wrap; gap: 8px; }
+.keep { font-size: 13px; padding: 3px 10px; border-radius: 999px; border: 1px solid var(--line-strong); }
+.keep.cut { border-style: dashed; color: var(--muted); }
+.keep b { font-weight: 700; color: var(--fg); }
+
+.panel { background: var(--surface); border: 1px solid var(--line); border-radius: 14px; padding: 18px; display: flex; flex-direction: column; gap: 14px; min-width: 0; }
+.banner { display: flex; flex-direction: column; gap: 6px; }
+.banner-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 12px; }
+.banner h2 { font-size: 22px; font-weight: 800; }
+.op-pill { font-family: var(--f-mono); font-size: 12px; padding: 2px 9px; border-radius: 999px; border: 1.5px solid var(--fg); }
+.phase-cap { margin: 0; max-width: 78ch; color: var(--fg-2); }
+.stepper { list-style: none; margin: 4px 0 0; padding: 0; display: flex; flex-wrap: wrap; gap: 6px; }
+.stepper button { font-size: 12.5px; padding: 3px 10px; border-radius: 999px; background: transparent; border: 1px solid var(--line); color: var(--muted); }
+.stepper .done button { color: var(--fg); background: var(--surface-2); border-color: transparent; }
+.stepper .cur button { background: var(--fg); color: var(--bg); border-color: var(--fg); }
+.stepper .n { font-family: var(--f-mono); margin-right: 5px; opacity: .7; }
+
+.controls { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.controls .grow { flex: 1 1 auto; }
+.speed { display: inline-flex; align-items: center; gap: 8px; font-size: 13px; color: var(--muted); }
+.speed input { width: 110px; accent-color: var(--fg); }
+.speed output { font-family: var(--f-mono); color: var(--fg); min-width: 3.2ch; }
+.next-up { font-size: 13px; color: var(--muted); margin: -4px 0 0; }
+.next-up b { color: var(--fg); font-weight: 700; }
+
+.now { border: 1px solid var(--line); background: var(--bg); border-radius: 10px; padding: 10px 14px; min-height: 5.2em; display: flex; flex-direction: column; gap: 2px; }
+.now .round { font-family: var(--f-mono); font-size: 12px; color: var(--muted); }
+.now .text { font-size: 15.5px; }
+.now .note { font-size: 12.5px; color: var(--muted); }
+
+.board-scroll { overflow-x: auto; margin: 0 -6px; padding: 0 6px; }
+.board-scroll svg { display: block; width: 100%; min-width: 760px; height: auto; }
+.pg-scroll svg { min-width: 640px; }
+
+.legend { display: flex; flex-wrap: wrap; gap: 8px 18px; font-size: 13px; color: var(--fg-2); }
+.legend span { display: inline-flex; align-items: center; gap: 7px; }
+.legend svg { width: 26px; height: 18px; flex: none; }
+
+.tally { font-size: 14px; margin: 0; }
+.tally b { font-variant-numeric: tabular-nums; }
+.table-scroll { overflow-x: auto; }
+table { border-collapse: collapse; width: 100%; font-size: 14px; font-variant-numeric: tabular-nums; }
+th, td { padding: 7px 10px; text-align: right; border-bottom: 1px solid var(--line); white-space: nowrap; }
+th:first-child, td:first-child { text-align: left; }
+th { font-weight: 700; color: var(--muted); font-size: 12.5px; }
+tr.cur td { background: var(--surface-2); font-weight: 700; }
+.small { font-size: 13px; color: var(--muted); margin: 0; max-width: 78ch; }
+.panel h2 { font-size: 22px; font-weight: 800; }
+.collbtns { display: flex; flex-wrap: wrap; gap: 8px; }
+.collbtns button { font-weight: 700; }
+.collbtns button.live { box-shadow: 0 0 0 3px var(--fresh); }
+.collbtns button[aria-pressed="true"] { background: var(--fg); color: var(--bg); border-color: var(--fg); }
+
+/* SVG board */
+.card { fill: var(--surface); stroke: var(--line); stroke-width: 1; }
+.dot.g0, .chip.g0 rect { fill: var(--g0); } .dot.g1, .chip.g1 rect { fill: var(--g1); }
+.dot.g2, .chip.g2 rect { fill: var(--g2); } .dot.g3, .chip.g3 rect { fill: var(--g3); }
+.gname { font-family: var(--f-display); font-weight: 800; font-size: 16px; }
+.gname.g0 { fill: var(--g0); } .gname.g1 { fill: var(--g1); } .gname.g2 { fill: var(--g2); } .gname.g3 { fill: var(--g3); }
+.gsub { font-size: 12px; fill: var(--muted); }
+.ghdr { font-family: var(--f-mono); font-size: 11.5px; fill: var(--fg-2); text-anchor: end; }
+.track { fill: var(--surface-2); } .fill { fill: var(--fg-2); } .peak { stroke: var(--fg); stroke-width: 2; }
+.glabel { font-size: 12px; fill: var(--muted); text-anchor: middle; letter-spacing: .04em; }
+.grule { stroke: var(--line); stroke-width: 1; }
+.rlabel { font-size: 12.5px; fill: var(--fg-2); dominant-baseline: central; }
+.slotl { font-family: var(--f-mono); font-size: 11px; fill: var(--muted); text-anchor: middle; }
+.slotl.own { font-weight: 600; }
+.slotl.own.g0 { fill: var(--g0); } .slotl.own.g1 { fill: var(--g1); } .slotl.own.g2 { fill: var(--g2); } .slotl.own.g3 { fill: var(--g3); }
+.uline { visibility: hidden; } .uline.g0 { fill: var(--g0); } .uline.g1 { fill: var(--g1); } .uline.g2 { fill: var(--g2); } .uline.g3 { fill: var(--g3); }
+.uline.on { visibility: visible; }
+.bxg { transform-box: fill-box; transform-origin: center; }
+.box { fill: var(--surface-2); stroke: var(--line-strong); stroke-width: 1; }
+.box.t-none { fill: none; stroke: var(--line-strong); stroke-dasharray: 3 3; }
+.box.t-empty { fill: var(--surface); }
+.box.t-local { fill: var(--local); }
+.box.t-partial { fill: var(--partial); }
+.box.t-sum { fill: var(--sum); }
+.box.t-stale { fill: var(--surface); stroke: var(--line); }
+.box.t-fresh { fill: var(--fresh-bg); stroke: var(--fresh); stroke-width: 2; }
+.box.t-borrowed { fill: var(--borrowed); stroke-dasharray: 2 2; }
+.box.hl { stroke: var(--fg); stroke-width: 2.2; stroke-dasharray: none; }
+.box.src, .box.dst { stroke: var(--fg); stroke-width: 2.6; stroke-dasharray: none; }
+.bx { font-family: var(--f-mono); font-size: 12px; font-weight: 500; fill: var(--fg); text-anchor: middle; dominant-baseline: central; }
+.bx.t-local { fill: var(--local-ink); }
+.bx.t-sum { font-weight: 600; }
+.bx.t-stale { fill: var(--muted); opacity: .75; }
+.bx.t-empty { fill: var(--muted); }
+.ring { stroke: var(--line-strong); stroke-width: 2; }
+.ring.on { stroke: var(--fg); stroke-width: 3; }
+.ah { fill: var(--line-strong); } .ah.on { fill: var(--fg); }
+.chipt { font-family: var(--f-mono); font-weight: 600; font-size: 12.5px; fill: var(--chip-ink); text-anchor: middle; dominant-baseline: central; }
+
+@media (prefers-reduced-motion: no-preference) {
+  .collbtns button.live { animation: pulse 1.4s ease-in-out infinite; }
+  @keyframes pulse { 50% { box-shadow: 0 0 0 6px transparent; } }
+}
+@media (max-width: 560px) {
+  .panel { padding: 14px; }
+  .speed input { width: 90px; }
+}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header class="top">
+    <p class="eyebrow">Distributed training · 4 GPUs · ring collectives</p>
+    <h1>ZeRO Collectives Lab</h1>
+    <p class="lede">Four GPUs train the same 2-layer model with 8 weights. Each GPU trains on different data, so the GPUs have to combine their gradients. Pick a method, then press <b>Next</b> to step through one training step and watch every number move, one send at a time.</p>
+  </header>
+
+  <section class="modes" aria-label="Training method">
+    <div class="tabs" role="tablist" id="tabs">
+      <button class="tab" role="tab" data-mode="ddp" id="tab-ddp">DDP</button>
+      <button class="tab" role="tab" data-mode="z1" id="tab-z1">ZeRO-1</button>
+      <button class="tab" role="tab" data-mode="z2" id="tab-z2">ZeRO-2</button>
+      <button class="tab" role="tab" data-mode="z3" id="tab-z3">ZeRO-3</button>
+    </div>
+    <p class="blurb" id="blurb"></p>
+    <div class="keeps" id="keeps"></div>
+  </section>
+
+  <section class="panel" aria-label="Training step">
+    <div class="banner">
+      <p class="eyebrow" id="where"></p>
+      <div class="banner-head"><h2 id="phaseTitle"></h2><span class="op-pill" id="opPill" hidden></span></div>
+      <p class="phase-cap" id="phaseCap"></p>
+      <ol class="stepper" id="stepper" aria-label="Phases of this step"></ol>
+    </div>
+    <div class="controls">
+      <button id="prev">← Prev</button>
+      <button id="next" class="primary">Next →</button>
+      <span class="grow"></span>
+      <button id="pause">Pause</button>
+      <button id="one">One send</button>
+      <button id="skip">Skip to end</button>
+      <label class="speed" for="speed">Speed <input type="range" id="speed" min="0" max="4" step="1" value="2"><output id="speedOut">1×</output></label>
+      <button id="reset">Start over</button>
+    </div>
+    <p class="next-up" id="nextUp"></p>
+    <div class="now" aria-live="polite">
+      <span class="round" id="round"></span>
+      <span class="text" id="nowText"></span>
+      <span class="note" id="nowNote"></span>
+    </div>
+    <div class="board-scroll"><svg id="board" role="img" aria-label="Four GPUs in a ring. Each shows its weights, gradients and optimizer state for 8 slots in 2 layers."></svg></div>
+    <div class="legend" id="legend"></div>
+    <p class="tally" id="tally"></p>
+  </section>
+
+  <section class="panel" aria-label="Compare the methods">
+    <h2>What each method costs, per GPU</h2>
+    <div class="table-scroll"><table id="compare"></table></div>
+    <p class="small">Counts are numbers, one box each. With 4 GPUs and 2 layers the savings look modest. The real run in this repo uses 32 GPUs and 4.2 million weights: a DDP GPU keeps 67.7 MB of model state, a ZeRO-3 GPU keeps 2.1 MB between steps.</p>
+  </section>
+
+  <section class="panel" aria-label="Playground">
+    <h2>Playground: one collective on its own</h2>
+    <p class="small" style="color:var(--fg-2)">GPU 0 starts with 1, 2, 3, 4. GPU 1 has ten times that, GPU 2 a hundred times, GPU 3 a thousand times. So in any total, each digit tells you which GPU it came from: in 4321, the 4 came from GPU 3 and the 1 from GPU 0.</p>
+    <div class="collbtns" id="collbtns">
+      <button data-op="rs" id="pg-rs" aria-pressed="false">Reduce-scatter</button>
+      <button data-op="ag" id="pg-ag" aria-pressed="false">All-gather</button>
+      <button data-op="ar" id="pg-ar" aria-pressed="false">All-reduce</button>
+    </div>
+    <p class="small" id="pgDef" style="color:var(--fg-2)">A glowing button means the training step above is running that collective right now.</p>
+    <div class="controls">
+      <button id="pgPause">Pause</button>
+      <button id="pgOne">One send</button>
+      <button id="pgSkip">Skip to end</button>
+    </div>
+    <div class="now" aria-live="polite">
+      <span class="round" id="pgRound"></span>
+      <span class="text" id="pgText"></span>
+      <span class="note" id="pgNote"></span>
+    </div>
+    <div class="board-scroll pg-scroll"><svg id="pg" role="img" aria-label="Playground: four GPUs in a ring, each holding 4 numbers."></svg></div>
+  </section>
+
+  <p class="small">The order of operations follows <code>zero.py</code> in this repo: DDP and ZeRO-1 combine gradients after backward, ZeRO-2 and ZeRO-3 reduce-scatter each layer as soon as its backward ends, and ZeRO-3 drops each layer's borrowed weights after forward and gathers them again for backward. Ring order is GPU 0 → 1 → 2 → 3 → 0. Keys: ← and → step through phases.</p>
+</div>
+
+<script>
+'use strict';
+
+// ---------------------------------------------------------------- simulation (no DOM)
+
+const N = 4;
+const LAYERS = [[0, 1, 2, 3], [4, 5, 6, 7]];
+const own = slot => slot % N;               // the GPU that owns a slot under ZeRO
+const clone = o => JSON.parse(JSON.stringify(o));
+const r2 = x => Math.round(x * 100) / 100;
+const minus = s => s.replace('-', '−');
+const nm = (row, slot) => row.toLowerCase() + slot;
+const lname = L => `layer ${L + 1}`;
+const range = (p, L) => `${p}${LAYERS[L][0]} to ${p}${LAYERS[L][3]}`;
+
+function fmt(row, v) {
+  if (v == null) return '–';
+  if (row === 'W') {
+    const a = Math.abs(v);
+    return minus(a < 10 ? v.toFixed(2) : a < 100 ? v.toFixed(1) : v.toFixed(0));
+  }
+  return minus(String(v));
+}
+
+// Dummy gradient: an integer 1..9, fixed for each (step, GPU, slot), so Prev then Next replays it.
+function gradFor(step, gpu, slot) {
+  let h = Math.imul(step + 1, 374761393) ^ Math.imul(gpu + 1, 668265263) ^ Math.imul(slot + 1, 2246822519);
+  h = Math.imul(h ^ (h >>> 15), 2246822507);
+  h = Math.imul(h ^ (h >>> 13), 3266489909);
+  h ^= h >>> 16;
+  return 1 + ((h >>> 0) % 9);
+}
+
+const MODES = {
+  ddp: { label: 'DDP', keeps: [1, 1, 1],
+    blurb: 'DDP: every GPU keeps everything. Gradients are combined with an all-reduce, and all four GPUs run the same update on all 8 weights.' },
+  z1: { label: 'ZeRO-1', keeps: [1, 1, 0],
+    blurb: 'ZeRO-1: the optimizer state is cut into slices. Each GPU keeps m only for the 2 weights it owns, one per layer, and only it updates them.' },
+  z2: { label: 'ZeRO-2', keeps: [1, 0, 0],
+    blurb: 'ZeRO-2: gradients are sliced too. Each layer\'s gradients are reduce-scattered as soon as backward finishes that layer, then the rest of the row is freed.' },
+  z3: { label: 'ZeRO-3', keeps: [0, 0, 0],
+    blurb: 'ZeRO-3: weights are sliced too. A GPU borrows a layer\'s weights just before it uses them and drops them right after.' },
+};
+
+function heldOf(gpu) {
+  let n = 0;
+  for (const r of ['W', 'G', 'M']) for (const c of gpu[r]) if (c) n++;
+  return n;
+}
+
+function initState(mode) {
+  const gpus = [];
+  for (let g = 0; g < N; g++) {
+    const W = [], G = [], M = [];
+    for (let s = 0; s < 8; s++) {
+      const mine = own(s) === g;
+      W.push(mode === 'z3' && !mine ? null : { v: s + 1, t: 'val' });
+      G.push(mode === 'ddp' || mode === 'z1' || mine ? { v: null, t: 'empty' } : null);
+      M.push(mode === 'ddp' || mine ? { v: 0, t: 'val' } : null);
+    }
+    gpus.push({ W, G, M });
+  }
+  return { gpus, owners: mode !== 'ddp', stepSent: [0, 0, 0, 0], peak: [0, 0, 0, 0] };
+}
+
+// Start of a step: clear the highlights, and empty the gradient boxes (zero_grad).
+function normalize(s, mode) {
+  s.gpus.forEach((u, g) => {
+    for (let sl = 0; sl < 8; sl++) {
+      if (u.W[sl]) u.W[sl].t = 'val';
+      if (u.M[sl]) u.M[sl].t = 'val';
+      u.G[sl] = mode === 'ddp' || mode === 'z1' || own(sl) === g ? { v: null, t: 'empty' } : null;
+    }
+  });
+  s.stepSent = [0, 0, 0, 0];
+  s.peak = s.gpus.map(heldOf);
+}
+
+// Ring reduce-scatter over `slots` (one chunk = one slot). In round t, GPU i sends chunk (i - t) to
+// GPU i + 1, which adds its own value. After N - 1 rounds chunk k's total sits on GPU k.
+function ringRS(s, row, slots, frame, ctx) {
+  let n = 0;
+  for (let t = 1; t < N; t++) {
+    for (let i = 0; i < N; i++) {
+      const k = ((i - t) % N + N) % N, j = (i + 1) % N, slot = slots[k], name = nm(row, slot);
+      const a = s.gpus[i][row][slot].v, b = s.gpus[j][row][slot].v, sum = a + b;
+      s.gpus[j][row][slot] = { v: sum, t: t === N - 1 ? 'sum' : 'partial' };
+      s.gpus[i][row][slot] = { v: a, t: 'stale' };
+      s.stepSent[i]++; n++;
+      let cap;
+      if (t === 1) cap = `GPU ${i} sends its own ${name} (${a}) to GPU ${j}, which adds its own ${name} (${b}): ${a} + ${b} = ${sum}.`;
+      else if (t < N - 1) cap = `GPU ${i} passes the running total for ${name} (${a}) to GPU ${j}, which adds its own ${b}: ${a} + ${b} = ${sum}.`;
+      else cap = `GPU ${i} passes the running total for ${name} (${a}) to GPU ${j}, which adds its own ${b}: ${sum}. That is the full total over all 4 GPUs, and GPU ${j} is the one that keeps ${name}.`;
+      frame(cap, { send: { from: i, to: j, row, slot, value: a }, round: ctx.roundBase + t, rounds: ctx.rounds,
+        sendNo: ctx.sendBase + n, sends: ctx.sends, half: ctx.half });
+    }
+  }
+}
+
+// Ring all-gather over `slots`. Chunk k starts on GPU k. In round t, GPU i passes chunk (i - t + 1) on.
+function ringAG(s, row, slots, frame, ctx, arriveTag) {
+  let n = 0;
+  for (let t = 1; t < N; t++) {
+    for (let i = 0; i < N; i++) {
+      const k = ((i - t + 1) % N + N) % N, j = (i + 1) % N, slot = slots[k], name = nm(row, slot);
+      const v = s.gpus[i][row][slot].v;
+      s.gpus[j][row][slot] = { v, t: arriveTag };
+      s.stepSent[i]++; n++;
+      const cap = t === 1
+        ? `GPU ${i} sends ${name} = ${fmt(row, v)}, the one it keeps, to GPU ${j}. Nothing is added, GPU ${j} just stores a copy.`
+        : `GPU ${i} passes on the copy of ${name} = ${fmt(row, v)} it just received, to GPU ${j}.`;
+      frame(cap, { send: { from: i, to: j, row, slot, value: v }, round: ctx.roundBase + t, rounds: ctx.rounds,
+        sendNo: ctx.sendBase + n, sends: ctx.sends, half: ctx.half });
+    }
+  }
+}
+
+function buildStep(mode, k, prev) {
+  const s = clone(prev);
+  normalize(s, mode);
+  const start = clone(s);
+  const phases = [];
+  let ph = null;
+  const phase = (title, short, op, caption) => { ph = { title, short, op, caption, frames: [] }; phases.push(ph); };
+  const frame = (caption, extra) => {
+    s.gpus.forEach((u, g) => { s.peak[g] = Math.max(s.peak[g], heldOf(u)); });
+    ph.frames.push(Object.assign({ state: clone(s), caption }, extra || {}));
+  };
+  const all = [0, 1, 2, 3];
+  const cells = (row, L) => all.flatMap(g => LAYERS[L].map(sl => [g, row, sl]));
+  const notOwned = (L, fn) => { for (const g of all) for (const sl of LAYERS[L]) if (own(sl) !== g) fn(s.gpus[g], sl, g); };
+  const z3 = mode === 'z3', early = mode === 'z2' || z3;
+  const dropW = L => notOwned(L, (u, sl) => { u.W[sl] = null; });
+  const freeG = L => notOwned(L, (u, sl) => { u.G[sl] = null; });
+
+  const forward = L => {
+    phase(`Forward pass, ${lname(L)}`, `Forward L${L + 1}`, null, z3
+      ? `Each GPU runs its own batch of data through ${lname(L)} using the weights it just borrowed, then drops the 3 it doesn't own.`
+      : `Each GPU runs its own batch of data through ${lname(L)}, reading its own full copy of ${range('w', L)}. Nothing is sent between GPUs.`);
+    frame(`All 4 GPUs read ${range('w', L)} at the same time, each on different data.`, { hl: cells('W', L) });
+    if (z3) {
+      dropW(L);
+      frame(`Dropped: each GPU is back to holding only its own weight in ${lname(L)}. That frees 3 boxes per GPU.`);
+    }
+  };
+
+  const backward = L => {
+    phase(`Backward pass, ${lname(L)}`, `Backward L${L + 1}`, null, early
+      ? `Backward runs from the last layer to the first. Each GPU sets aside a full gradient row for ${lname(L)} and fills it from its own batch.`
+      : `Backward runs from the last layer to the first. Each GPU works out a gradient for every weight in ${lname(L)} from its own batch.`);
+    if (early) {
+      for (const g of all) for (const sl of LAYERS[L]) s.gpus[g].G[sl] = { v: null, t: 'empty' };
+      frame(`Opened: 4 empty gradient boxes for ${lname(L)} on every GPU. The 3 a GPU doesn't own are borrowed memory, only for this layer.`, { hl: cells('G', L) });
+    }
+    for (const g of all) for (const sl of LAYERS[L]) s.gpus[g].G[sl] = { v: gradFor(k, g, sl), t: 'local' };
+    frame(`New gradients ${range('g', L)} (amber). Each GPU's come from its own batch only, so the four GPUs disagree. They have to be added up.`,
+      { hl: cells('G', L).concat(z3 ? cells('W', L) : []) });
+  };
+
+  const reduceG = L => {
+    if (mode === 'ddp') {
+      phase(`All-reduce: ${lname(L)} gradients`, `All-reduce g L${L + 1}`, 'ar',
+        `Add up the 4 GPUs' gradients for ${lname(L)} so every GPU ends with the same totals. On a ring this runs as a reduce-scatter (rounds 1 to 3) followed by an all-gather (rounds 4 to 6).`);
+      ringRS(s, 'G', LAYERS[L], frame, { roundBase: 0, rounds: 6, sendBase: 0, sends: 24, half: 'reduce-scatter half' });
+      frame('Halfway: each GPU holds one finished total (teal). The all-gather half now copies those totals around the ring.');
+      ringAG(s, 'G', LAYERS[L], frame, { roundBase: 3, rounds: 6, sendBase: 12, sends: 24, half: 'all-gather half' }, 'sum');
+      const tot = LAYERS[L].map(sl => `g${sl} = ${s.gpus[0].G[sl].v}`).join(', ');
+      frame(`Done: every GPU has the same totals for ${lname(L)}: ${tot}. Each GPU sent 6 numbers.`);
+      return;
+    }
+    phase(`Reduce-scatter: ${lname(L)} gradients`, `Reduce-scatter g L${L + 1}`, 'rs',
+      `Add up the 4 GPUs' gradients for ${lname(L)}, but deliver each total only to the GPU that owns that weight. 3 rounds of 4 sends.`);
+    ringRS(s, 'G', LAYERS[L], frame, { roundBase: 0, rounds: 3, sendBase: 0, sends: 12 });
+    const who = LAYERS[L].map(sl => `GPU ${own(sl)} has g${sl} = ${s.gpus[own(sl)].G[sl].v}`).join(', ');
+    frame(`Done: ${who}. The grey boxes are leftovers nobody needs.` + (mode === 'z1' ? ' ZeRO-1 still keeps the whole gradient row in memory.' : ''));
+    if (early) {
+      freeG(L);
+      if (z3) dropW(L);
+      frame(z3
+        ? `Freed: each GPU keeps only its own gradient total and its own weight for ${lname(L)}. The borrowed boxes are gone.`
+        : `Freed: each GPU keeps only its own gradient total and hands back the memory for the other 3 boxes.`);
+    }
+  };
+
+  const gatherW = (L, kind) => {
+    const caps = {
+      share: `Each GPU shares the weight it just updated in ${lname(L)}, so every GPU has the whole layer up to date for the next step. 3 rounds of 4 sends, no adding.`,
+      borrow: `ZeRO-3 keeps only 1 of ${lname(L)}'s 4 weights on each GPU. Before using the layer, each GPU borrows the other 3 from their owners.`,
+      again: `Backward needs ${lname(L)}'s weights, and they were dropped after the forward pass, so each GPU borrows them again.` +
+        (L === 1 ? ' Real systems often keep the last layer to skip this gather.' : ''),
+    };
+    phase(`All-gather: ${lname(L)} weights`, `All-gather w L${L + 1}`, 'ag', caps[kind]);
+    if (z3) {
+      notOwned(L, (u, sl) => { u.W[sl] = { v: null, t: 'empty' }; });
+      frame('Each GPU sets aside 3 empty boxes for the weights it is about to borrow.');
+    }
+    ringAG(s, 'W', LAYERS[L], frame, { roundBase: 0, rounds: 3, sendBase: 0, sends: 12 }, z3 ? 'borrowed' : 'fresh');
+    frame(`Done: every GPU holds ${range('w', L)}${z3 ? ', but only until it has used them' : ''}.` +
+      (kind === 'share' && L === 1 ? ' Step finished: all 4 GPUs have the same 8 weights again.' : ''));
+  };
+
+  const updateW = () => {
+    phase('Update the weights', 'Update', null, mode === 'ddp'
+      ? 'Every GPU updates all 8 weights: m ← m + g, then w ← w − 0.01 × m. All four do the same work and get the same answers.'
+      : 'Each GPU updates only the 2 weights it owns, one per layer: m ← m + g, then w ← w − 0.01 × m. Only the owner has the m for those weights.');
+    let ex = null;
+    const hl = [];
+    s.gpus.forEach((u, g) => {
+      for (let sl = 0; sl < 8; sl++) {
+        if (mode === 'ddp' || own(sl) === g) {
+          const gv = u.G[sl].v, m0 = u.M[sl].v, w0 = u.W[sl].v, m = m0 + gv, w = r2(w0 - 0.01 * m);
+          u.M[sl] = { v: m, t: 'fresh' };
+          u.W[sl] = { v: w, t: 'fresh' };
+          if (!ex) ex = { gv, m0, w0, m, w };
+          hl.push([g, 'G', sl]);
+        } else if (u.W[sl]) u.W[sl].t = 'stale';
+      }
+    });
+    const tail = mode === 'ddp' ? ' Step finished: all 4 GPUs hold identical weights.'
+      : z3 ? ' Step finished. The next forward pass borrows these new weights.'
+      : ' The grey weights on the other GPUs are now out of date, so the owners must share the new ones.';
+    frame(`Example, GPU 0: m0 = ${ex.m0} + ${ex.gv} = ${ex.m}, then w0 = ${fmt('W', ex.w0)} − 0.01 × ${ex.m} = ${fmt('W', ex.w)}.` + tail, { hl });
+  };
+
+  if (mode === 'ddp' || mode === 'z1') {
+    forward(0); forward(1); backward(1); backward(0); reduceG(0); reduceG(1); updateW();
+    if (mode === 'z1') { gatherW(0, 'share'); gatherW(1, 'share'); }
+  } else if (mode === 'z2') {
+    forward(0); forward(1); backward(1); reduceG(1); backward(0); reduceG(0); updateW();
+    gatherW(0, 'share'); gatherW(1, 'share');
+  } else {
+    gatherW(0, 'borrow'); forward(0); gatherW(1, 'borrow'); forward(1);
+    gatherW(1, 'again'); backward(1); reduceG(1); gatherW(0, 'again'); backward(0); reduceG(0); updateW();
+  }
+  return { start, phases };
+}
+
+const lastState = step => step.phases[step.phases.length - 1].frames.slice(-1)[0].state;
+
+// Playground: 4 GPUs x 4 numbers, values 1/10/100/1000 x (slot + 1).
+function pgFrames(op) {
+  const s = { gpus: [], owners: true, stepSent: [0, 0, 0, 0], peak: [0, 0, 0, 0] };
+  for (let g = 0; g < N; g++) {
+    s.gpus.push({ V: [0, 1, 2, 3].map(sl => op === 'ag'
+      ? (sl === g ? { v: 1111 * (g + 1), t: 'sum' } : { v: null, t: 'empty' })
+      : { v: (sl + 1) * 10 ** g, t: 'local' }) });
+  }
+  const start = clone(s), frames = [];
+  const frame = (caption, extra) => frames.push(Object.assign({ state: clone(s), caption }, extra || {}));
+  const slots = [0, 1, 2, 3];
+  if (op === 'ag') {
+    frame('Start: each GPU holds only its own slice. GPU r has vr, and its other 3 boxes are empty, waiting for copies.');
+    ringAG(s, 'V', slots, frame, { roundBase: 0, rounds: 3, sendBase: 0, sends: 12 }, 'sum');
+    frame('Done: every GPU holds 1111, 2222, 3333, 4444. Nothing was added, only copied. Each GPU sent 3 numbers.');
+  } else {
+    frame('Start: each GPU holds its own 4 numbers (amber = not combined yet).');
+    ringRS(s, 'V', slots, frame, { roundBase: 0, rounds: op === 'ar' ? 6 : 3, sendBase: 0, sends: op === 'ar' ? 24 : 12,
+      half: op === 'ar' ? 'reduce-scatter half' : undefined });
+    if (op === 'rs') {
+      frame('Done: GPU 0 has v0 = 1111, GPU 1 has v1 = 2222, GPU 2 has v2 = 3333, GPU 3 has v3 = 4444. Each GPU keeps one slice of the total and sent 3 numbers. Grey boxes are leftovers.');
+    } else {
+      frame('Halfway: each GPU has one finished total (teal). That was a reduce-scatter. Now an all-gather copies the totals around.');
+      ringAG(s, 'V', slots, frame, { roundBase: 3, rounds: 6, sendBase: 12, sends: 24, half: 'all-gather half' }, 'sum');
+      frame('Done: every GPU holds 1111, 2222, 3333, 4444, the full totals. Each GPU sent 6 numbers, twice as many as a reduce-scatter.');
+    }
+  }
+  return { start, frames };
+}
+
+const PG_DEFS = {
+  rs: 'Reduce-scatter: add everyone\'s numbers together, and each GPU keeps only one slice of the total.',
+  ag: 'All-gather: each GPU shares its one slice, and everyone ends up with all the slices. Nothing is added.',
+  ar: 'All-reduce: everyone ends up with the full total. On a ring it is a reduce-scatter followed by an all-gather.',
+};
+const OP_NAMES = { rs: 'reduce-scatter', ag: 'all-gather', ar: 'all-reduce' };
+
+// ---------------------------------------------------------------- drawing
+
+const SVGNS = 'http://www.w3.org/2000/svg';
+const REDUCED = typeof matchMedia !== 'undefined' && matchMedia('(prefers-reduced-motion: reduce)').matches;
+const SPEEDS = [0.25, 0.5, 1, 2, 4];
+
+function el(tag, attrs, parent) {
+  const e = document.createElementNS(SVGNS, tag);
+  for (const k in attrs) e.setAttribute(k, attrs[k]);
+  if (parent) parent.appendChild(e);
+  return e;
+}
+
+class Board {
+  constructor(svg, c) {
+    this.svg = svg; this.c = c;
+    c.cardH = c.top + c.rows.length * (c.boxH + c.rowGap) - c.rowGap + 16;
+    const m = 16, gx = 60, gy = 64, x0 = 20, x1 = x0 + c.cardW + gx, y1 = m + c.cardH + gy;
+    const P = this.pos = [{ x: x0, y: m }, { x: x1, y: m }, { x: x1, y: y1 }, { x: x0, y: y1 }];
+    const cw = c.cardW, ch = c.cardH;
+    svg.setAttribute('viewBox', `0 0 ${x1 + cw + x0} ${y1 + ch + m}`);
+    svg.textContent = '';
+    const defs = el('defs', {}, svg);
+    for (const [id, cls] of [['ah', 'ah'], ['ahon', 'ah on']]) {
+      const mk = el('marker', { id: `${c.id}-${id}`, viewBox: '0 0 10 10', refX: '8', refY: '5', markerWidth: '6', markerHeight: '6', orient: 'auto' }, defs);
+      el('path', { d: 'M0,0 L10,5 L0,10 z', class: cls }, mk);
+    }
+    const pad = 8;
+    const segs = [
+      [P[0].x + cw + pad, P[0].y + ch / 2, P[1].x - pad, P[1].y + ch / 2],
+      [P[1].x + cw / 2, P[1].y + ch + pad, P[2].x + cw / 2, P[2].y - pad],
+      [P[2].x - pad, P[2].y + ch / 2, P[3].x + cw + pad, P[3].y + ch / 2],
+      [P[3].x + cw / 2, P[3].y - pad, P[0].x + cw / 2, P[0].y + ch + pad],
+    ];
+    this.arrows = []; this.mid = [];
+    segs.forEach(([a, b, x2, y2]) => {
+      this.arrows.push(el('line', { x1: a, y1: b, x2, y2, class: 'ring', 'marker-end': `url(#${c.id}-ah)` }, svg));
+      this.mid.push({ x: (a + x2) / 2, y: (b + y2) / 2 });
+    });
+    this.boxes = []; this.slotL = []; this.uline = []; this.hdr = []; this.barFill = []; this.barPeak = [];
+    const glY = c.top - 28, slY = c.top - 9;
+    for (let g = 0; g < N; g++) {
+      const G = el('g', { transform: `translate(${P[g].x},${P[g].y})` }, svg);
+      el('rect', { x: 0, y: 0, width: cw, height: ch, rx: 12, class: 'card' }, G);
+      el('circle', { cx: 20, cy: 22, r: 5, class: `dot g${g}` }, G);
+      el('text', { x: 32, y: 28, class: `gname g${g}` }, G).textContent = `GPU ${g}`;
+      if (c.batch) el('text', { x: 92, y: 27, class: 'gsub' }, G).textContent = `batch ${g}`;
+      this.hdr.push(el('text', { x: cw - 16, y: 27, class: 'ghdr' }, G));
+      if (c.showHeld) {
+        el('rect', { x: 16, y: 38, width: cw - 32, height: 5, rx: 2.5, class: 'track' }, G);
+        this.barFill.push(el('rect', { x: 16, y: 38, width: 0, height: 5, rx: 2.5, class: 'fill' }, G));
+        this.barPeak.push(el('line', { x1: 16, y1: 35, x2: 16, y2: 46, class: 'peak' }, G));
+      }
+      if (c.groupLabels) {
+        c.groups.forEach((grp, gi) => {
+          const a = this.slotX(grp[0]), b = this.slotX(grp[grp.length - 1]) + c.boxW;
+          el('text', { x: (a + b) / 2, y: glY, class: 'glabel' }, G).textContent = c.groupLabels[gi];
+          el('line', { x1: a, y1: glY + 6, x2: b, y2: glY + 6, class: 'grule' }, G);
+        });
+      }
+      const sl = [], ul = [];
+      for (let s = 0; s < c.slots; s++) {
+        const cx = this.slotX(s) + c.boxW / 2;
+        const t = el('text', { x: cx, y: slY, class: 'slotl' }, G); t.textContent = s;
+        sl.push(t);
+        ul.push(el('rect', { x: cx - 8, y: slY + 3, width: 16, height: 2.5, rx: 1, class: `uline g${g}` }, G));
+      }
+      this.slotL.push(sl); this.uline.push(ul);
+      const rows = {};
+      c.rows.forEach((r, ri) => {
+        const y = this.rowY(ri);
+        el('text', { x: 16, y: y + c.boxH / 2, class: 'rlabel' }, G).textContent = r.label;
+        rows[r.key] = [];
+        for (let s = 0; s < c.slots; s++) {
+          const outer = el('g', { transform: `translate(${this.slotX(s)},${y})` }, G);
+          const inner = el('g', { class: 'bxg' }, outer);
+          const rect = el('rect', { x: 0, y: 0, width: c.boxW, height: c.boxH, rx: 5, class: 'box' }, inner);
+          const text = el('text', { x: c.boxW / 2, y: c.boxH / 2 + 1, class: 'bx' }, inner);
+          rows[r.key].push({ g: inner, rect, text });
+        }
+      });
+      this.boxes.push(rows);
+    }
+    this.chip = el('g', { class: 'chip', visibility: 'hidden' }, svg);
+    el('rect', { x: -26, y: -14, width: 52, height: 28, rx: 14 }, this.chip);
+    this.chipT = el('text', { x: 0, y: 1, class: 'chipt' }, this.chip);
+  }
+  slotX(s) {
+    const c = this.c, gi = c.groups.findIndex(grp => grp.includes(s));
+    return c.labelW + s * (c.boxW + c.gap) + gi * c.groupGap;
+  }
+  rowY(ri) { return this.c.top + ri * (this.c.boxH + this.c.rowGap); }
+  center(g, row, slot) {
+    const ri = this.c.rows.findIndex(r => r.key === row);
+    return { x: this.pos[g].x + this.slotX(slot) + this.c.boxW / 2, y: this.pos[g].y + this.rowY(ri) + this.c.boxH / 2 };
+  }
+  render(state, o = {}) {
+    const c = this.c, key = (g, r, s) => `${g}:${r}:${s}`;
+    const hl = new Set((o.hl || []).map(a => key(...a)));
+    const sd = o.sending;
+    for (let g = 0; g < N; g++) {
+      const u = state.gpus[g];
+      for (const r of c.rows) {
+        for (let s = 0; s < c.slots; s++) {
+          const cell = u[r.key][s], b = this.boxes[g][r.key][s], tag = cell ? cell.t : 'none';
+          let cls = `box t-${tag}`;
+          if (hl.has(key(g, r.key, s))) cls += ' hl';
+          if (sd && sd.row === r.key && sd.slot === s) { if (sd.from === g) cls += ' src'; if (sd.to === g) cls += ' dst'; }
+          b.rect.setAttribute('class', cls);
+          b.text.setAttribute('class', `bx t-${tag}`);
+          b.text.textContent = cell ? fmt(r.key, cell.v) : '';
+        }
+      }
+      for (let s = 0; s < c.slots; s++) {
+        const owned = state.owners && own(s) === g;
+        this.slotL[g][s].setAttribute('class', owned ? `slotl own g${g}` : 'slotl');
+        this.uline[g][s].setAttribute('class', `uline g${g}${owned ? ' on' : ''}`);
+      }
+      if (c.showHeld) {
+        const held = heldOf(u), w = c.cardW - 32;
+        this.hdr[g].textContent = `holds ${held} · peak ${state.peak[g]} · sent ${state.stepSent[g]}`;
+        this.barFill[g].setAttribute('width', w * held / c.maxHeld);
+        const px = 16 + w * state.peak[g] / c.maxHeld;
+        this.barPeak[g].setAttribute('x1', px); this.barPeak[g].setAttribute('x2', px);
+      } else {
+        this.hdr[g].textContent = `sent ${state.stepSent[g]}`;
+      }
+    }
+    this.arrows.forEach((a, i) => {
+      const on = sd && sd.from === i;
+      a.setAttribute('class', on ? 'ring on' : 'ring');
+      a.setAttribute('marker-end', `url(#${c.id}-${on ? 'ahon' : 'ah'})`);
+    });
+    if (o.flash && !REDUCED) {
+      for (const [g, r, s] of o.flash) {
+        const b = this.boxes[g][r][s].g;
+        if (b.animate) b.animate([{ transform: 'scale(1.25)' }, { transform: 'scale(1)' }], { duration: 380, easing: 'ease-out' });
+      }
+    }
+  }
+  fly(send, dur, done) {
+    const a = this.center(send.from, send.row, send.slot), b = this.center(send.to, send.row, send.slot), m = this.mid[send.from];
+    this.chip.setAttribute('class', `chip g${send.from}`);
+    this.chipT.textContent = fmt(send.row, send.value);
+    const hide = () => this.chip.setAttribute('visibility', 'hidden');
+    if (dur <= 0) { done(); return { cancel() {} }; }
+    this.chip.setAttribute('visibility', 'visible');
+    let t0 = null, raf = 0;
+    const tick = ts => {
+      if (t0 === null) t0 = ts;
+      const t = Math.min(1, (ts - t0) / dur), e = t < .5 ? 2 * t * t : 1 - (-2 * t + 2) ** 2 / 2, f = 1 - e;
+      const x = f * f * a.x + 2 * f * e * m.x + e * e * b.x, y = f * f * a.y + 2 * f * e * m.y + e * e * b.y;
+      this.chip.setAttribute('transform', `translate(${x},${y})`);
+      if (t < 1) raf = requestAnimationFrame(tick); else { hide(); done(); }
+    };
+    raf = requestAnimationFrame(tick);
+    return { cancel: () => { cancelAnimationFrame(raf); hide(); } };
+  }
+}
+
+// Plays a list of frames: a send frame flies a chip, then the receiving box updates.
+class Runner {
+  constructor(board, speed, hooks) {
+    Object.assign(this, { board, speed, hooks, frames: [], i: 0, active: false, busy: false, playing: true, timer: 0, anim: null });
+  }
+  start(frames, startState) {
+    this.cancel();
+    Object.assign(this, { frames, i: 0, prev: startState, active: true });
+    this.board.render(startState);
+    this.step();
+  }
+  step() {
+    if (!this.active || this.busy) return;
+    if (this.i >= this.frames.length) { this.finish(); return; }
+    const f = this.frames[this.i];
+    this.busy = true;
+    this.hooks.onFrame(f);
+    const land = () => {
+      this.anim = null;
+      this.board.render(f.state, { hl: f.hl, flash: f.send ? [[f.send.to, f.send.row, f.send.slot]] : null });
+      this.prev = f.state; this.i++; this.busy = false;
+      this.hooks.onLand && this.hooks.onLand(f);
+      if (this.i >= this.frames.length) { this.finish(); return; }
+      if (this.playing) this.timer = setTimeout(() => this.step(), (f.send ? 420 : 1700) / this.speed());
+    };
+    if (f.send) {
+      this.board.render(this.prev, { sending: f.send });
+      this.anim = this.board.fly(f.send, REDUCED ? 0 : 760 / this.speed(), land);
+    } else land();
+  }
+  pause() { this.playing = false; clearTimeout(this.timer); }
+  play() { this.playing = true; if (this.active && !this.busy) this.step(); }
+  one() { if (!this.active) return; this.pause(); if (!this.busy) this.step(); }
+  skip() {
+    if (!this.active) return;
+    clearTimeout(this.timer);
+    if (this.anim) { this.anim.cancel(); this.anim = null; }
+    this.busy = false;
+    const f = this.frames[this.frames.length - 1];
+    this.i = this.frames.length;
+    this.board.render(f.state, { hl: f.hl });
+    this.hooks.onFrame(f);
+    this.finish();
+  }
+  cancel() {
+    clearTimeout(this.timer);
+    if (this.anim) { this.anim.cancel(); this.anim = null; }
+    this.active = false; this.busy = false;
+  }
+  finish() { this.active = false; this.hooks.onEnd && this.hooks.onEnd(); }
+}
+
+// ---------------------------------------------------------------- page
+
+function boot() {
+  const $ = s => document.querySelector(s);
+  let speedIdx = 2;
+  const speed = () => SPEEDS[speedIdx];
+
+  const board = new Board($('#board'), {
+    id: 'mb', rows: [{ key: 'W', label: 'weights w' }, { key: 'G', label: 'gradients g' }, { key: 'M', label: 'optimizer m' }],
+    slots: 8, groups: LAYERS, groupLabels: ['layer 1', 'layer 2'], boxW: 36, boxH: 30, gap: 4, groupGap: 12,
+    labelW: 110, cardW: 450, top: 86, rowGap: 8, showHeld: true, maxHeld: 24, batch: true,
+  });
+  const pg = new Board($('#pg'), {
+    id: 'pg', rows: [{ key: 'V', label: 'numbers v' }], slots: 4, groups: [[0, 1, 2, 3]], groupLabels: null,
+    boxW: 64, boxH: 34, gap: 8, groupGap: 0, labelW: 110, cardW: 450, top: 64, rowGap: 8, showHeld: false, batch: false,
+  });
+
+  const app = { mode: 'z2', steps: [], step: 0, done: -1, running: null };
+  const getStep = k => {
+    while (app.steps.length <= k) {
+      const prev = app.steps.length ? lastState(app.steps[app.steps.length - 1]) : initState(app.mode);
+      app.steps.push(buildStep(app.mode, app.steps.length, prev));
+    }
+    return app.steps[k];
+  };
+  const stateAt = (k, d) => d < 0 ? getStep(k).start : getStep(k).phases[d].frames.slice(-1)[0].state;
+
+  const setNow = (ids, f) => {
+    $(ids[0]).textContent = f && f.round ? `Round ${f.round} of ${f.rounds}${f.half ? ' · ' + f.half : ''} · send ${f.sendNo} of ${f.sends}` : '';
+    $(ids[1]).textContent = f ? f.caption : '';
+    $(ids[2]).textContent = f && f.send ? 'On real GPUs the 4 sends of a round happen at the same moment. Here they play one at a time.' : '';
+  };
+
+  const runner = new Runner(board, speed, {
+    onFrame: f => setNow(['#round', '#nowText', '#nowNote'], f),
+    onLand: f => updateTally(f.state),
+    onEnd: () => {
+      if (app.running) { app.step = app.running.k; app.done = app.running.p; app.running = null; }
+      updateUI();
+    },
+  });
+
+  function runPhase(k, p) {
+    const st = getStep(k);
+    app.running = { k, p };
+    updateUI();
+    runner.start(st.phases[p].frames, p === 0 ? st.start : st.phases[p - 1].frames.slice(-1)[0].state);
+  }
+
+  function next() {
+    if (runner.active) { runner.skip(); return; }
+    let k = app.step, p = app.done + 1;
+    if (p >= getStep(k).phases.length) { k++; p = 0; }
+    runPhase(k, p);
+  }
+
+  function prev() {
+    if (runner.active) {
+      runner.cancel(); app.running = null;
+    } else {
+      if (app.step === 0 && app.done < 0) return;
+      app.done--;
+      if (app.done < 0 && app.step > 0) { app.step--; app.done = getStep(app.step).phases.length - 1; }
+    }
+    showIdle();
+  }
+
+  function showIdle() {
+    const st = stateAt(app.step, app.done);
+    board.render(st);
+    const f = app.done >= 0 ? getStep(app.step).phases[app.done].frames.slice(-1)[0] : null;
+    setNow(['#round', '#nowText', '#nowNote'], f ? { caption: f.caption } : { caption: 'Nothing has happened yet. Press Next to run the first phase.' });
+    updateTally(st);
+    updateUI();
+  }
+
+  function setMode(m) {
+    runner.cancel();
+    Object.assign(app, { mode: m, steps: [], step: 0, done: -1, running: null });
+    document.querySelectorAll('.tab').forEach(t => t.setAttribute('aria-selected', String(t.dataset.mode === m)));
+    $('#blurb').textContent = MODES[m].blurb;
+    const names = ['weights', 'gradients', 'optimizer m'];
+    $('#keeps').innerHTML = MODES[m].keeps.map((whole, i) =>
+      `<span class="keep${whole ? '' : ' cut'}">${names[i]}: <b>${whole ? 'whole copy' : '1 slice of 4'}</b></span>`).join('');
+    renderCompare();
+    showIdle();
+  }
+
+  function updateTally(st) {
+    const held = heldOf(st.gpus[0]), full = lastState(getStep(0)).stepSent[0];
+    $('#tally').innerHTML = `Each GPU now holds <b>${held}</b> numbers (peak this step <b>${st.peak[0]}</b>; a DDP GPU always holds 24). ` +
+      `Sent so far this step: <b>${st.stepSent[0]}</b> numbers per GPU, out of <b>${full}</b> for a full ${MODES[app.mode].label} step.`;
+  }
+
+  function updateUI() {
+    const viewK = app.running ? app.running.k : app.step;
+    const st = getStep(viewK), n = st.phases.length;
+    const curP = app.running ? app.running.p : app.done;
+    const ph = curP >= 0 ? st.phases[curP] : null;
+    $('#where').textContent = ph ? `Step ${viewK + 1} · phase ${curP + 1} of ${n}${app.running ? ' · running' : ' · done'}` : `Step ${viewK + 1} · ready`;
+    $('#phaseTitle').textContent = ph ? ph.title : 'Ready';
+    $('#phaseCap').textContent = ph ? ph.caption : (app.mode === 'z3'
+      ? 'Each GPU starts with only the 2 weights it owns, one per layer, and zero momentum m. Underlined slot numbers mark what a GPU owns.'
+      : `Every GPU starts with the same weights, w0 to w7 = 1.00 to 8.00, and zero momentum m.${app.mode === 'ddp' ? '' : ' Underlined slot numbers mark what a GPU owns.'}`);
+    const pill = $('#opPill');
+    pill.hidden = !(ph && ph.op);
+    if (ph && ph.op) pill.textContent = OP_NAMES[ph.op];
+    const ol = $('#stepper');
+    ol.innerHTML = '';
+    st.phases.forEach((p, i) => {
+      const li = document.createElement('li');
+      const cls = app.running ? (i < curP ? 'done' : i === curP ? 'cur' : '') : (i < curP ? 'done' : i === curP ? 'done cur' : '');
+      li.className = cls;
+      const b = document.createElement('button');
+      b.innerHTML = `<span class="n">${i + 1}</span>${p.short}`;
+      b.title = `Play: ${p.title}`;
+      b.addEventListener('click', () => { runner.cancel(); app.step = viewK; app.done = i - 1; runPhase(viewK, i); });
+      li.appendChild(b); ol.appendChild(li);
+    });
+    let nk = viewK, np = curP + 1;
+    if (np >= n) { nk++; np = 0; }
+    const nextPh = getStep(nk).phases[np];
+    $('#nextUp').innerHTML = `${app.running ? 'After this' : 'Next'}: <b>${nk !== viewK ? `step ${nk + 1}, ` : ''}${nextPh.title}</b>`;
+    $('#next').textContent = app.running ? 'Finish phase' : 'Next →';
+    $('#prev').disabled = !app.running && app.step === 0 && app.done < 0;
+    $('#one').disabled = !app.running;
+    $('#skip').disabled = !app.running;
+    $('#pause').textContent = runner.playing ? 'Pause' : 'Play';
+    document.querySelectorAll('#collbtns button').forEach(b =>
+      b.classList.toggle('live', !!(app.running && ph && ph.op === b.dataset.op)));
+  }
+
+  function renderCompare() {
+    const rows = Object.keys(MODES).map(m => {
+      const step = buildStep(m, 0, initState(m)), end = lastState(step);
+      const sends = step.phases.filter(p => p.op).length;
+      return `<tr class="${m === app.mode ? 'cur' : ''}"><td>${MODES[m].label}</td><td>${heldOf(step.start.gpus[0])}</td>` +
+        `<td>${end.peak[0]}</td><td>${end.stepSent[0]}</td><td>${sends}</td><td>${step.phases.length}</td></tr>`;
+    }).join('');
+    $('#compare').innerHTML = '<thead><tr><th>method</th><th>numbers held between steps</th><th>peak during a step</th>' +
+      '<th>numbers sent per step</th><th>collectives per step</th><th>phases</th></tr></thead><tbody>' + rows + '</tbody>';
+  }
+
+  // legend
+  const LEG = [
+    ['t-val', '4.2', 'a number this GPU holds'], ['t-none', '', 'not held: no memory used'],
+    ['t-empty', '–', 'memory set aside, nothing written yet'], ['t-local', '7', 'gradient from this GPU\'s batch only'],
+    ['t-partial', '12', 'running total, still collecting'], ['t-sum', '22', 'full total over all 4 GPUs'],
+    ['t-stale', '9', 'leftover or out of date'], ['t-fresh', '0.8', 'just updated, or a fresh copy'],
+    ['t-borrowed', '3.1', 'weight borrowed for a moment (ZeRO-3)'],
+  ];
+  $('#legend').innerHTML = LEG.map(([t, v, label]) =>
+    `<span><svg viewBox="0 0 26 18" aria-hidden="true"><rect class="box ${t}" x="1" y="1" width="24" height="16" rx="3"></rect>` +
+    `<text class="bx ${t}" x="13" y="9.5" style="font-size:8px">${v}</text></svg>${label}</span>`).join('');
+
+  // playground
+  let pgOp = null;
+  const pgRunner = new Runner(pg, speed, {
+    onFrame: f => setNow(['#pgRound', '#pgText', '#pgNote'], f),
+    onEnd: () => {},
+  });
+  pg.render(pgFrames('rs').start);
+  setNow(['#pgRound', '#pgText', '#pgNote'], { caption: 'Pick a collective above to run it on these numbers.' });
+  document.querySelectorAll('#collbtns button').forEach(b => b.addEventListener('click', () => {
+    pgOp = b.dataset.op;
+    document.querySelectorAll('#collbtns button').forEach(x => x.setAttribute('aria-pressed', String(x === b)));
+    $('#pgDef').textContent = PG_DEFS[pgOp];
+    const { start, frames } = pgFrames(pgOp);
+    pgRunner.start(frames, start);
+  }));
+  $('#pgPause').addEventListener('click', () => {
+    if (pgRunner.playing) pgRunner.pause(); else pgRunner.play();
+    $('#pgPause').textContent = pgRunner.playing ? 'Pause' : 'Play';
+  });
+  $('#pgOne').addEventListener('click', () => { pgRunner.one(); $('#pgPause').textContent = 'Play'; });
+  $('#pgSkip').addEventListener('click', () => pgRunner.skip());
+
+  // controls
+  document.querySelectorAll('.tab').forEach(t => t.addEventListener('click', () => setMode(t.dataset.mode)));
+  $('#next').addEventListener('click', next);
+  $('#prev').addEventListener('click', prev);
+  $('#pause').addEventListener('click', () => { if (runner.playing) runner.pause(); else runner.play(); updateUI(); });
+  $('#one').addEventListener('click', () => { runner.one(); updateUI(); });
+  $('#skip').addEventListener('click', () => runner.skip());
+  $('#reset').addEventListener('click', () => setMode(app.mode));
+  $('#speed').addEventListener('input', e => { speedIdx = +e.target.value; $('#speedOut').textContent = SPEEDS[speedIdx] + '×'; });
+  document.addEventListener('keydown', e => {
+    if (e.target.tagName === 'INPUT' || e.metaKey || e.ctrlKey || e.altKey) return;
+    if (e.key === 'ArrowRight') { e.preventDefault(); next(); }
+    if (e.key === 'ArrowLeft') { e.preventDefault(); prev(); }
+  });
+
+  setMode('z2');
+}
+
+if (typeof document !== 'undefined') boot();
+</script>
+</body>
+</html>
